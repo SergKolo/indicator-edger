@@ -10,6 +10,7 @@ Package: indicator-edger
 Architecture: all
 Depends: python3-gi,
          gir1.2-appindicator3-0.1,
+         zenity,
          ${python:Depends},
          ${misc:Depends}
 Description:  Indicator Edger

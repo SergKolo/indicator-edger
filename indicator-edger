@@ -33,15 +33,9 @@ import gi
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
 from gi.repository import GLib,AppIndicator3,Gtk,Gdk,Notify
-from collections import OrderedDict
-# from collections import OrderedDict
-import urllib.parse
+from collections import namedtuple
 import subprocess
 import signal
-import copy
-import shutil
-import dbus
-import math
 import json
 import os
 
@@ -102,6 +96,7 @@ class Edger(object):
 
     def update(self,*args):
         pos = self.get_pointer_position()
+        self.define_edges()
         print('>>>DEBUG:',pos,str(self.lock))
         on_edge=False
         for key,val in self.edges.items():
@@ -127,12 +122,15 @@ class Edger(object):
     def get_pointer_position(self,*args):
         screen = Gdk.Screen.get_default()
         root_window = screen.get_root_window()
-        return root_window.get_pointer()
+        position = namedtuple("position",'x y')
+        return position(x=root_window.get_pointer()[1],
+                        y=root_window.get_pointer()[2])
 
     def get_display_params(self,*args):
         screen = Gdk.Screen.get_default()
         root_window = screen.get_root_window()
-        return tuple([root_window.get_width(),root_window.get_height()])
+        return tuple([root_window.get_width(),
+                      root_window.get_height()])
 
     def set_commands_dialog(self,*args):
         cmd = ['zenity', '--forms', '--add-entry',"TOP",
