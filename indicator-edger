@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Author: Serg Kolo , contact: 1047481448@qq.com
+# Date: Feb 18, 2017
+# Purpose: App Indicator for triggering actions based on mouse
+#          location relative to screen edges.
+# Tested on: Ubuntu 16.04 LTS
+#
+# Licensed under The MIT License (MIT).
+# See included LICENSE file or the notice below.
+#
+# Copyright © 2017 Sergiy Kolodyazhnyy
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included
+# in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+import gi
+gi.require_version('AppIndicator3', '0.1')
+gi.require_version('Notify', '0.7')
+from gi.repository import GLib,AppIndicator3,Gtk,Gdk,Notify
+from collections import OrderedDict
+# from collections import OrderedDict
+import urllib.parse
+import subprocess
+import signal
+import copy
+import shutil
+import dbus
+import math
+import json
+import os
+
+class Edger(object):
+
+    def __init__(self):
+        self.app = AppIndicator3.Indicator.new(
+            'indicator-edger', "starred",
+            AppIndicator3.IndicatorCategory.HARDWARE
+        )
+        self.user_home = os.path.expanduser('~')
+        filename = '.edger-actions.json'
+        self.config = os.path.join(self.user_home,filename)
+
+
+        self.app.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+
+        self.lock = False
+        self.enable_button = None
+
+        self.notif = Notify.Notification.new("Notify") 
+
+        self.define_edges()
+        self.make_menu()
+        self.update()
+
+    def read_config(self,*args):
+        try:
+            with open(self.config) as fd1:
+                 config = json.load(fd1)
+
+        except FileNotFoundError:
+            with open(self.config,'a') as fd1:
+                 fd1.write("{}")
+            return
+        except json.JSONDecodeError:
+            return 
+        else:
+            return config
+
+    def write_config(self,*args,**kwargs):
+        print('>>> DEBUG: writing config')
+        configs=None
+
+        if 'config' in kwargs.keys():
+           configs = kwargs['config']
+        else:
+           configs = self.read_config()
+
+        with open(self.config,'w') as fd1:
+             if not configs: configs={}
+             configs['enabled'] = self.enable_button.get_active()
+             json.dump(configs,fd1,indent=4)
+
+
+    def callback(self,*args):
+        self.update()
+
+    def update(self,*args):
+        pos = self.get_pointer_position()
+        print('>>>DEBUG:',pos,str(self.lock))
+        on_edge=False
+        for key,val in self.edges.items():
+            if pos.x in  val[0] and pos.y in val[1]:
+                on_edge = True
+                if not self.lock:
+                    self.run_edge_command(key)
+                    break
+        if not on_edge and self.lock:
+              self.lock = False
+        GLib.timeout_add_seconds(1.5,self.callback)
+    
+    def run_edge_command(self,key):
+        if not self.enable_button.get_active(): return
+        if not os.path.exists(self.config): return
+        commands = self.read_config()
+        if not commands: return
+        if isinstance(commands[key],str) and commands[key]:
+            self.lock = True
+            self.send_notif(self.notif,'Indicator Edger','Activated '+key+' trigger')
+            subprocess.Popen(commands[key],shell=True)
+
+    def get_pointer_position(self,*args):
+        screen = Gdk.Screen.get_default()
+        root_window = screen.get_root_window()
+        return root_window.get_pointer()
+
+    def get_display_params(self,*args):
+        screen = Gdk.Screen.get_default()
+        root_window = screen.get_root_window()
+        return tuple([root_window.get_width(),root_window.get_height()])
+
+    def set_commands_dialog(self,*args):
+        cmd = ['zenity', '--forms', '--add-entry',"TOP",
+               '--add-entry',"BOTTOM", '--add-entry',"LEFT", 
+               '--add-entry',"RIGHT", '--separator',"%%"]
+        out = self.run_cmd(cmd)
+        if not out: return
+        out = out.decode().strip().split('%%')
+        #self.enable_button.set_active(True)
+        out_dict = {"top":out[0],"bottom":out[1],"left":out[2],"right":out[3]}
+        self.write_config(config=out_dict)
+        
+    def add_submenu(self,top_menu,label,**kwargs):
+        """ utility function for adding submenus"""
+        menuitem = Gtk.MenuItem(label)
+        if kwargs and 'icon' in kwargs.keys():
+            menuitem = Gtk.ImageMenuItem.new_with_label(label)
+            menuitem.set_always_show_image(True)
+            if '/' in kwargs['icon']:
+                icon = Gtk.Image.new_from_file(kwargs['icon'])
+            else:
+                icon = Gtk.Image.new_from_icon_name(kwargs['icon'], 48)
+            menuitem.set_image(icon)
+        submenu = Gtk.Menu()
+        menuitem.set_submenu(submenu)
+        top_menu.append(menuitem)
+        menuitem.show()
+        return submenu
+
+    def add_menu_item(self, menu_obj, item_type, image, label, action, args):
+        """ dynamic function that can add menu items depending on
+            the item type and other arguments"""
+        menu_item, icon = None, None
+        if item_type is Gtk.ImageMenuItem and label:
+            menu_item = Gtk.ImageMenuItem.new_with_label(label)
+            menu_item.set_always_show_image(True)
+            if '/' in image:
+                icon = Gtk.Image.new_from_file(image)
+            else:
+                icon = Gtk.Image.new_from_icon_name(image, 48)
+            menu_item.set_image(icon)
+        elif item_type is Gtk.ImageMenuItem and not label:
+            menu_item = Gtk.ImageMenuItem()
+            menu_item.set_always_show_image(True)
+            if '/' in image:
+                icon = Gtk.Image.new_from_file(image)
+            else:
+                icon = Gtk.Image.new_from_icon_name(image, 16)
+            menu_item.set_image(icon)
+        elif item_type is Gtk.MenuItem:
+            menu_item = Gtk.MenuItem(label)
+        elif item_type is Gtk.SeparatorMenuItem:
+            menu_item = Gtk.SeparatorMenuItem()
+        if action:
+            menu_item.connect('activate', action, *args)
+        menu_obj.append(menu_item)
+        menu_item.show()
+        return menu_item
+
+    def define_edges(self,*args):
+        x,y = self.get_display_params() 
+        self.edges = {}
+        self.edges['top'] = ( range(3,x),range(0,3) )
+        self.edges['bottom'] = ( range(3,x) , range(y-3,y)  )
+        self.edges['right'] = (range(x-3,x),range(3,y))
+        self.edges['left'] =   (  range(0,3),range(3,y) )
+ 
+    def make_menu(self):
+        if hasattr(self, 'app_menu'):
+            for item in self.app_menu.get_children():
+                    self.app_menu.remove(item)
+        else:
+            self.app_menu = Gtk.Menu()
+
+    #def add_menu_item(self, menu_obj, item_type, image, label, action, args):
+        item = [self.app_menu,Gtk.MenuItem,None,
+                'DEFINE COMMANDS',self.set_commands_dialog,[None]]
+        self.add_menu_item(*item)
+
+
+        self.enable_button = Gtk.CheckMenuItem('Enable/Disable triggering')
+        self.settings = self.read_config()
+        if self.settings and self.settings['enabled']:
+            self.enable_button.set_active(True)
+        self.enable_button.connect("toggled",self.write_config)
+        self.app_menu.append(self.enable_button)
+        self.enable_button.show()
+
+        item = [self.app_menu,Gtk.ImageMenuItem,
+                'exit','Quit',
+                self.quit,[None]]
+        self.add_menu_item(*item) 
+
+        # END make_menu
+        self.app.set_menu(self.app_menu)
+
+
+    def quit(self,*args):
+        Gtk.main_quit()
+
+    def run_cmd(self, cmdlist):
+        """ utility: reusable function for running external commands """
+        #new_env = dict(os.environ)
+        #new_env['LC_ALL'] = 'C'
+        try:
+            stdout = subprocess.check_output(cmdlist) #env=new_env)
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            if stdout:
+                return stdout
+
+    def send_notif(self, n, title, text):
+        try:
+            if Notify.init(__file__):
+                n.update(title, text)
+                n.set_urgency(2)
+                if not n.show():
+                    raise SyntaxError("sending notification failed!")
+            else:
+                raise SyntaxError("can't initialize notification!")
+        except SyntaxError as error:
+            if self.debug: print(">> DEBUG:",str(error))
+            if error == "sending notification failed!":
+                Notify.uninit()
+        else:
+            Notify.uninit()
+
+    def run(self):
+        """ Launches the indicator """
+        Gtk.main()
+
+    def quit(self, *args):
+        """ closes indicator """
+        Gtk.main_quit()
+
+def main():
+    """ defines program entry point """
+    indicator = Edger()
+    signal.signal(signal.SIGINT,signal.SIG_DFL)
+    indicator.run()
+
+if __name__ == '__main__':
+    # TODO: Ctr+C
+    main()

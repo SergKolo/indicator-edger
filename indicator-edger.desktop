@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=0.1
+Name=Indicator Edger
+Comment=Run commands via positioning mouse on screen edge
+Exec=indicator-bulletin
+Type=Application
+Icon=starred
+Terminal=false
